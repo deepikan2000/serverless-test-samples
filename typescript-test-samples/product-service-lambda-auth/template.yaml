@@ -1,0 +1,195 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  product-service
+
+  Sample SAM Template for product-service
+
+Parameters:
+  IssuerUrl:
+    Type: String
+    Description: Issuer URL for your Auth0 Api
+  APIAudience:
+    Type: String
+    Description: The identifier value of the API you created in the Auth0 API
+
+# More info about Globals: https://github.com/awslabs/serverless-application-model/blob/master/docs/globals.rst
+Globals:
+  Function:
+    Runtime: nodejs18.x
+    Timeout: 100
+    Tracing: Active
+    MemorySize: 128
+    CodeUri: ./
+    Environment:
+      Variables:
+        APP_NAME: !Ref ProductTable
+        PRODUCT_TABLE: !Ref ProductTable
+        SERVICE_NAME: product_service
+        ENABLE_DEBUG: false
+        AWS_NODEJS_CONNECTION_REUSE_ENABLED: 1
+
+  Api:
+    TracingEnabled: true
+
+Resources:
+  # API Gateway
+  Api:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: Prod
+      Auth:
+        DefaultAuthorizer: MyLambdaRequestAuthorizer
+        Authorizers:
+          MyLambdaRequestAuthorizer:
+            FunctionPayloadType: REQUEST
+            FunctionArn: !GetAtt MyRequestAuthFunction.Arn
+            Identity:
+              Headers:
+                - Authorization
+          MyLambdaTokenAuthorizer:
+            FunctionPayloadType: TOKEN
+            FunctionArn: !GetAtt MyTokenAuthFunction.Arn
+
+  # Lambda Functions
+  getAllProductsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: src/handlers/get-all-products.getAllProductsHandler
+      Description: Get all Product details
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ProductTable
+        - CloudWatchPutMetricPolicy: {}
+        - CloudWatchLambdaInsightsExecutionRolePolicy
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: /products
+            Method: GET
+            Auth:
+              Authorizer: MyLambdaRequestAuthorizer
+
+  getByIdFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: src/handlers/get-product-by-id.getProductByIdHandler
+      Description: Get a product by ID
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ProductTable
+        - CloudWatchPutMetricPolicy: {}
+        - CloudWatchLambdaInsightsExecutionRolePolicy
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: /products/{id}
+            Method: GET
+            Auth:
+              Authorizer: MyLambdaRequestAuthorizer
+
+  putProductFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: src/handlers/put-product.putProductHandler
+      Description: Add new Product
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ProductTable
+        - CloudWatchPutMetricPolicy: {}
+        - CloudWatchLambdaInsightsExecutionRolePolicy
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: /products
+            Method: POST
+            Auth:
+              Authorizer: MyLambdaRequestAuthorizer
+
+  deleteByIdFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: src/handlers/delete-product-by-id.deleteProductByIdHandler
+      Description: Delete a product by ID
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ProductTable
+        - CloudWatchPutMetricPolicy: {}
+        - CloudWatchLambdaInsightsExecutionRolePolicy
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            RestApiId: !Ref Api
+            Path: /products/{id}
+            Method: DELETE
+            Auth:
+              Authorizer: MyLambdaTokenAuthorizer
+
+  MyRequestAuthFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: src/authorizers/requestAuthorizer.requestAuthorizerHandler
+
+  MyTokenAuthFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: src/authorizers/tokenAuthorizer.tokenAuthorizerHandler
+      Environment:
+        Variables:
+          JWKS_URI: !Ref IssuerUrl
+          AUDIENCE: !Ref APIAudience
+          TOKEN_ISSUER: !Ref IssuerUrl
+
+  # DynamoDB Table
+  ProductTable:
+    Type: AWS::Serverless::SimpleTable
+    Properties:
+      TableName: "ProductsTbl"
+      PrimaryKey:
+        Name: id
+        Type: String
+
+  # CloudWatch Logs - Log Groups
+  ApiAccessLogGroup:
+    Type: AWS::Logs::LogGroup
+    DependsOn: Api
+    Properties:
+      LogGroupName: !Sub /aws/apigateway/${Api}
+      RetentionInDays: 7
+
+  GetByIdLogGroup:
+    Type: AWS::Logs::LogGroup
+    DependsOn: getByIdFunction
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${getByIdFunction}
+      RetentionInDays: 7
+
+  GetAllProductsLogGroup:
+    Type: AWS::Logs::LogGroup
+    DependsOn: getAllProductsFunction
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${getAllProductsFunction}
+      RetentionInDays: 7
+
+  PutProductLogGroup:
+    Type: AWS::Logs::LogGroup
+    DependsOn: putProductFunction
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${putProductFunction}
+      RetentionInDays: 7
+
+Outputs:
+  ApiUrl:
+    Description: "API Gateway endpoint URL for Prod stage"
+    Value: !Sub "https://${Api}.execute-api.${AWS::Region}.amazonaws.com/Prod/"
+
+  ProductTable:
+    Value: !GetAtt ProductTable.Arn
+    Description: Product Data Table ARN
